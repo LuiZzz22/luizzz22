@@ -1,0 +1,109 @@
+{
+  "username": "usuario_exemplo",
+  "password": "senha_segura"
+}
+{
+  "access_token": "token_jwt_aqui"
+}
+[
+  {"id": 1, "nome": "Item1", "descricao": "Descrição 1"},
+  {"id": 2, "nome": "Item2", "descricao": "Descrição 2"}
+]
+{"id": 1, "nome": "Item1", "descricao": "Descrição 1"}
+{
+  "nome": "ItemNovo",
+  "descricao": "Nova descrição"
+}
+{"message": "Item criado com sucesso", "id": 3}
+{
+  "nome": "ItemAtualizado",
+  "descricao": "Descrição atualizada"
+}
+{"message": "Item atualizado com sucesso"}
+pip install fastapi uvicorn sqlalchemy psycopg2
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+import jwt
+import hashlib
+
+# Configuração básica
+DATABASE_URL = "postgresql://usuario:senha@host:porta/banco"
+SECRET_KEY = "sua_chave_secreta"
+app = FastAPI()
+Base = declarative_base()
+
+# Configuração do banco de dados
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Modelos
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True)
+    password = Column(String)
+
+class Item(Base):
+    __tablename__ = "items"
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String)
+    descricao = Column(String)
+
+# Schemas (Pydantic)
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class ItemSchema(BaseModel):
+    nome: str
+    descricao: str
+
+# Funções auxiliares
+def verify_password(plain_password, hashed_password):
+    return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
+
+def create_token(data):
+    return jwt.encode(data, SECRET_KEY, algorithm="HS256")
+
+# Rotas
+@app.post("/auth/login")
+def login(user: UserLogin, db=Depends(SessionLocal)):
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if not db_user or not verify_password(user.password, db_user.password):
+        raise HTTPException(status_code=400, detail="Credenciais inválidas")
+    token = create_token({"id": db_user.id, "username": db_user.username})
+    return {"access_token": token}
+
+@app.get("/items")
+def get_items(db=Depends(SessionLocal)):
+    return db.query(Item).all()
+
+@app.get("/items/{item_id}")
+def get_item(item_id: int, db=Depends(SessionLocal)):
+    item = db.query(Item).filter(Item.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+    return item
+
+@app.post("/items")
+def create_item(item: ItemSchema, db=Depends(SessionLocal)):
+    new_item = Item(nome=item.nome, descricao=item.descricao)
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    return {"message": "Item criado com sucesso", "id": new_item.id}
+
+@app.put("/items/{item_id}")
+def update_item(item_id: int, item: ItemSchema, db=Depends(SessionLocal)):
+    db_item = db.query(Item).filter(Item.id == item_id).first()
+    if not db_item:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+    db_item.nome = item.nome
+    db_item.descricao = item.descricao
+    db.commit()
+    return {"message": "Item atualizado com sucesso"}
+uvicorn main:app --reload
+
